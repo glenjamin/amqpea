@@ -6,6 +6,9 @@
   "scripts": {
     "test": "mocha"
   },
+  "publishConfig":{
+    "registry":"http://gueacontroltst01.skybet.net:5984"
+  },
   "author": "Glen Mailer <glenjamin@gmail.com>",
   "license": "BSD-3",
   "dependencies": {
