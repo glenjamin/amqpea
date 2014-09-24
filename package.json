@@ -9,10 +9,14 @@
   "publishConfig": {
     "registry": "http://gueacontroltst01.skybet.net:5984"
   },
+  "repository": {
+    "type": "git",
+    "url": "git@devtools.skybet.net:mailerg/amqpea.git"
+  },
   "author": "Glen Mailer <glenjamin@gmail.com>",
   "license": "BSD-3",
   "dependencies": {
-    "async": "^0.9.0",
+    "async": "~0.9.0",
     "bramqp": "0.1.17"
   }
 }
