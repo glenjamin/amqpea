@@ -4,6 +4,8 @@ var net = require('net');
 
 var async = require('async');
 
+var amqpea = require('..');
+
 var login = process.env.AMQP_USERNAME || "guest";
 var password = process.env.AMQP_PASSWORD || "guest";
 var hostname = process.env.AMQP_HOSTNAME || "localhost";
@@ -20,47 +22,98 @@ var uriData = {
     pathname: encodeURIComponent(vhost)
 };
 
-exports.uri = urllib.format(uriData);
+var uri = exports.uri = urllib.format(uriData);
 exports.brokenUri = urllib.format(
-    copy(uriData, { hostname: '23rt' + hostname }));
+    copy(uriData, { hostname: 'amqp.example.com' }));
 exports.brokenUri2 = urllib.format(
-    copy(uriData, { hostname: 'lfg' + hostname }));
+    copy(uriData, { hostname: 'amqp.example.org' }));
 
-before(function(done) {
+// Ensure we can connect at all before starting tests
+before(function checkConnectivity(done) {
     async.map([port, admin], async.apply(testConnection, hostname), done);
 });
-
-var connections = [];
-exports.deferCleanup = function deferCleanup(amqp) {
-    amqp.on('ready', function() {
-        connections.push(amqp);
+function testConnection(hostname, port, callback) {
+    var socket = net.connect({host: hostname, port: port});
+    socket.on('connect', function() {
+        socket.end();
+        callback();
     });
+    socket.on('error', callback);
+}
+
+// Shorthand factory for connection related to test
+exports.createConnection = function(context, callback) {
+    var name = context.currentTest.fullTitle();
+    var amqp = amqpea(uri, { timeout: 50, client: { product: name } });
+    amqp.on('error', callback);
+    amqp.on('ready', function() {
+        amqp.removeListener('error', callback);
+        callback();
+    });
+    exports.deferCleanup(amqp);
+    return amqp;
 };
-afterEach(function(done) {
+
+// Ensure server state is cleared down between tests
+var items = [];
+var connections = [];
+exports.deferCleanup = function deferCleanup(type, object) {
+    if (typeof object === 'undefined') {
+        object = type;
+        type = 'connection';
+    }
+    switch(type) {
+        case 'connection':
+            object.on('ready', function() {
+                connections.push(object);
+            });
+            break;
+        case 'exchange':
+            items.push(['exchange', object]);
+            break;
+    }
+};
+afterEach(function closeConnections(done) {
     async.each(connections, function(amqp, next) {
         amqp.close(next);
     }, done);
     connections = [];
 });
+afterEach(function deleteItems(done) {
+    async.each(items, function(item, next) {
+        var type = item[0], name = item[1];
+        exports.admin({
+            method: 'DELETE',
+            path: "/" + type + "s/" + encodeURIComponent(vhost) + "/" + name
+        }, next);
+    }, done);
+    connections = [];
+});
 
+// Helpers for talking to the admin API
 var client = require('request');
-exports.admin = function(path, callback) {
-    client({
+exports.admin = function(options, callback) {
+    if (typeof options === 'string') {
+        options = { path: options };
+    }
+    client(copy({
         uri: urllib.format({
             protocol: "http",
             hostname: hostname,
             port: admin,
-            pathname: path
+            pathname: "/api" + options.path
         }),
         json: true,
         auth: { username: login, password: password }
-    }, function(err, res, body) {
+    }, options), function(err, res, body) {
+        err = err || res.statusCode >= 400 &&
+            new Error('' + res.statusCode + ': ' + body);
         callback(err, body, res);
     });
 };
 exports.adminConnectionInfo = function (amqp, callback) {
     var outgoingPort = amqp.socket.localPort;
-    exports.admin("/api/connections", function(err, connections) {
+    exports.admin("/connections", function(err, connections) {
         if (err) return callback(err);
 
         var connection = connections.filter(function(conn) {
@@ -72,15 +125,6 @@ exports.adminConnectionInfo = function (amqp, callback) {
         callback(null, connection);
     });
 };
-
-function testConnection(hostname, port, callback) {
-    var socket = net.connect({host: hostname, port: port});
-    socket.on('connect', function() {
-        socket.end();
-        callback();
-    });
-    socket.on('error', callback);
-}
 
 function copy(a, b) {
     var result = {};
